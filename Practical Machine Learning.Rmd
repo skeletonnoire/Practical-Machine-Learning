@@ -1,0 +1,107 @@
+---
+title: "Practical Machine Learning - Course Project Week 4"
+output: html_document
+---
+#Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+#Data
+Load the data (and packages) and replace missing variables and #DIV/0 with NA
+
+```{r,warning=FALSE, message=FALSE}
+require("RCurl")
+require("caret")
+
+url1 <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+training <- read.csv(text=url1,na.strings=c("NA","#DIV/0!", "") )
+
+url2 <- getURL("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+testing <- read.csv(text=url2,na.strings=c("NA","#DIV/0!", "") )
+```
+
+
+#Pre-processing 
+We want to remove some of this data, as it has no predictive role:
+```{r}
+varToRemove <- names(training) %in% c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2","cvtd_timestamp", "new_window", "new_window", "num_window")
+
+training <- training[!varToRemove]
+```
+
+Let's also remove columns from the training set where there is too much missing data (say 80%+)
+
+```{r}
+training <- training[colSums(!is.na(training))> nrow(training)*0.2]
+```
+
+That leaves us with 53 variables, including the 'classe' variable that we will be predicting
+Now, let's also exclude highly correlated varibles (see Jason Brownlee's blog on that here: http://machinelearningmastery.com/feature-selection-with-the-caret-r-package/)
+
+```{r, warning=FALSE, message=FALSE}
+library(caret) # Model package
+correlationMatrix <- cor(training[, 1:52])
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.75)
+training <- training[-c(highlyCorrelated)]
+```
+
+To identify the best model, we will build a couple of different once that we have come across during this coursera course: Tree based classification; Bagging; Random Forest, Support Vector Machine. First, however, we will create a hold-out sample, consisting of 30% of the training set.
+
+```{r}
+set.seed(100)
+trainIndex <- createDataPartition(training$classe, p=.7, list=FALSE)
+training <- training[trainIndex,]
+holdout <- training[-trainIndex,]
+```
+
+#Model build
+We are going to use the trainControl option to speed up computation of the models
+```{r}
+tc <- trainControl( method = "cv", repeats = 5)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(e1071) # Needed for rpart/tree model
+library(ipred) # Needed for bagging
+library(gbm) # Needed for boosting
+library(randomForest) # Needed for Random Forest
+
+set.seed(100)
+treeModel <- train(classe ~., method="rpart", trControl=tc, data=training)
+bagModel <-train(classe ~.,method="treebag", trControl=tc, data=training) 
+boostModel <- train(classe ~., method="gbm", trControl=tc, verbose=FALSE, data=training)
+rfModel <- train(classe ~., method="rf", trControl=tc, data=training) 
+```
+
+Now, let's have a look at the confusionMatrix's outputs to se what model is predicting best on the training sample
+```{r}
+confusionMatrix(training$classe, predict(treeModel,training))$overall
+confusionMatrix(training$classe, predict(bagModel,training))$overall
+confusionMatrix(training$classe, predict(boostModel,training))$overall
+confusionMatrix(training$classe, predict(rfModel,training))$overall
+```
+
+#Model validation
+Let's now validate them on the hold-out sample (e.g. data frame = "testing")
+```{r}
+confusionMatrix(holdout$classe, predict(treeModel,holdout))$overall
+confusionMatrix(holdout$classe, predict(bagModel,holdout))$overall
+confusionMatrix(holdout$classe, predict(boostModel,holdout))$overall
+confusionMatrix(holdout$classe, predict(rfModel,holdout))$overall
+```
+
+So the best model is 'rfModel', which was built using Random Forest. The bagging approach also yielded a very good model. For rfModel the in sample error (1-Accuracy) 0%, and the out of sample error was also 0%. We can further see that the model is correctly predicting all 'classe' classifications by showing the full confusionMatrix for both the training and hold-out sample.
+
+```{r}
+confusionMatrix(training$classe, predict(rfModel,training))
+confusionMatrix(holdout$classe, predict(rfModel,holdout))
+```
+
+
+#Quiz answers
+Finally, we can score the 'testing' set which is needed for the quiz
+
+```{r}
+answers_for_quiz <- predict(rfModel, testing)
+as.vector(answers_for_quiz)
+```
